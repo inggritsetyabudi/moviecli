@@ -20,6 +20,8 @@ def test_normalize_provider_name_defaults_to_moviebox():
         ("moviebox", "moviebox"),
         ("YFLIX", "yflix"),
         ("Vega", "vega"),
+        ("rebahin", "rebahin"),
+        ("REBAHIN", "rebahin"),
         ("samehadaku", "samehadaku"),
         ("OPLOVERS", "oplovers"),
         ("Otakudesu", "otakudesu"),
@@ -56,3 +58,10 @@ def test_get_provider_reads_environment(monkeypatch: pytest.MonkeyPatch):
     provider = get_provider()
     assert isinstance(provider, VegaProvider)
     assert provider.selected_provider_value == "autoEmbed"
+
+
+def test_get_provider_rebahin():
+    from moviebox_api.providers.rebahin_provider import RebahinProvider
+    provider = get_provider("rebahin")
+    assert isinstance(provider, RebahinProvider)
+    assert provider.name == "rebahin"

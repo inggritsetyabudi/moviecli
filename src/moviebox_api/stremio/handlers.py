@@ -9,13 +9,17 @@ returned as direct URLs.
 
 import logging
 import os
+from urllib.parse import quote_plus
+
+import httpx
 
 from moviebox_api.constants import SubjectType
 from moviebox_api.core import Search, Trending
 from moviebox_api.models import SearchResultsItem, SearchResultsModel
-from moviebox_api.providers import get_provider
+from moviebox_api.providers import DEFAULT_PROVIDER
 from moviebox_api.requests import Session
-from moviebox_api.stremio.imdb import CinemetaInfo, parse_video_id, resolve_imdb
+from moviebox_api.source import SourceResolver
+from moviebox_api.stremio.imdb import CINEMETA_BASE_URL, CinemetaInfo, parse_video_id, resolve_imdb
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +72,8 @@ def _format_provider_subtitles(subtitles: list, *, proxy: bool, provider_name: s
 async def handle_stream(content_type: str, video_id: str) -> dict:
     """Handle a Stremio stream request.
 
-    Returns proxied stream URLs — our server fetches CDN content
-    with correct auth headers and streams to Stremio.
+    Uses SourceResolver to find streams with automatic fallback across
+    active providers (Vega, Rebahin, etc.).
     """
     imdb_id, season, episode = parse_video_id(video_id)
 
@@ -79,37 +83,31 @@ async def handle_stream(content_type: str, video_id: str) -> dict:
         return {"streams": []}
 
     subject_type = SubjectType.TV_SERIES if content_type == "series" else SubjectType.MOVIES
+    provider_name = os.getenv("MOVIEBOX_PROVIDER", DEFAULT_PROVIDER)
 
-    provider_name = os.getenv("MOVIEBOX_PROVIDER", "moviebox")
+    target_season = season if content_type == "series" else 0
+    target_episode = episode if content_type == "series" else 0
 
+    resolver = SourceResolver(provider_name)
     try:
-        provider = get_provider(provider_name)
-    except Exception as exc:
-        logger.error(f"Invalid provider '{provider_name}': {exc}")
-        return {"streams": []}
-
-    try:
-        item = await provider.search_best_match(info.title, subject_type, year=info.year)
-        if not item:
-            logger.warning(f"No {provider.name} results for '{info.title}'")
-            return {"streams": []}
-
-        target_season = season if content_type == "series" else 0
-        target_episode = episode if content_type == "series" else 0
-        resolved_streams = await provider.resolve_streams(
-            item,
+        item, resolved_streams, resolved_subtitles = await resolver.resolve(
+            info.title,
+            subject_type,
+            year=info.year,
             season=target_season,
             episode=target_episode,
+            imdb_id=imdb_id,
         )
     except Exception as exc:
-        logger.error(f"Provider stream resolution failed ({provider.name}): {exc}")
+        logger.error(f"Stream resolution failed for {info.title}: {exc}")
         return {"streams": []}
 
     if not resolved_streams:
-        logger.warning(f"No streams resolved by provider '{provider.name}' for {info.title}")
+        logger.warning(f"No streams resolved for {info.title}")
         return {"streams": []}
 
-    should_proxy = provider.name == "moviebox"
+    effective_provider = resolver.resolved_provider_name or provider_name or "stream"
+    should_proxy = effective_provider == "moviebox"
 
     streams = []
     for stream in resolved_streams:
@@ -120,18 +118,19 @@ async def handle_stream(content_type: str, video_id: str) -> dict:
             description = f"{quality} • {_format_size(stream.size)}"
 
         stream_obj = {
-            "name": f"{provider.name.title()} {quality}",
+            "name": f"{effective_provider.title()} {quality}",
             "description": description,
             "url": _proxy_media_url(stream.url) if should_proxy else stream.url,
             "behaviorHints": {
-                "bingeGroup": f"{provider.name}-{quality.lower()}",
+                "bingeGroup": f"{effective_provider}-{quality.lower()}",
             },
         }
 
+        stream_subtitles = stream.subtitles or resolved_subtitles
         subtitles = _format_provider_subtitles(
-            stream.subtitles,
+            stream_subtitles,
             proxy=should_proxy,
-            provider_name=provider.name,
+            provider_name=effective_provider,
         )
         if subtitles:
             stream_obj["subtitles"] = subtitles
@@ -139,13 +138,13 @@ async def handle_stream(content_type: str, video_id: str) -> dict:
         streams.append(stream_obj)
 
     logger.info(
-        f"Returning {len(streams)} streams for {info.title}{f' S{season}E{episode}' if season > 0 else ''}"
+        f"Returning {len(streams)} streams for {info.title}{f' S{season}E{episode}' if season > 0 else ''} (via {effective_provider})"
     )
     return {"streams": streams}
 
 
 async def handle_subtitles(content_type: str, video_id: str) -> dict:
-    """Handle a Stremio subtitles request with proxied URLs."""
+    """Handle a Stremio subtitles request."""
     imdb_id, season, episode = parse_video_id(video_id)
 
     info = await resolve_imdb(imdb_id, content_type)
@@ -153,44 +152,56 @@ async def handle_subtitles(content_type: str, video_id: str) -> dict:
         return {"subtitles": []}
 
     subject_type = SubjectType.TV_SERIES if content_type == "series" else SubjectType.MOVIES
+    provider_name = os.getenv("MOVIEBOX_PROVIDER", DEFAULT_PROVIDER)
 
-    provider_name = os.getenv("MOVIEBOX_PROVIDER", "moviebox")
+    target_season = season if content_type == "series" else 0
+    target_episode = episode if content_type == "series" else 0
 
+    resolver = SourceResolver(provider_name)
     try:
-        provider = get_provider(provider_name)
+        item, streams, subtitles = await resolver.resolve(
+            info.title,
+            subject_type,
+            year=info.year,
+            season=target_season,
+            episode=target_episode,
+            imdb_id=imdb_id,
+        )
     except Exception as exc:
-        logger.error(f"Invalid provider '{provider_name}': {exc}")
+        logger.error(f"Subtitles resolution failed for {info.title}: {exc}")
         return {"subtitles": []}
 
-    try:
-        item = await provider.search_best_match(info.title, subject_type, year=info.year)
-        if not item:
-            return {"subtitles": []}
-
-        target_season = season if content_type == "series" else 0
-        target_episode = episode if content_type == "series" else 0
-
-        subtitles = await provider.resolve_subtitles(item, season=target_season, episode=target_episode)
-
-        if not subtitles:
-            streams = await provider.resolve_streams(item, season=target_season, episode=target_episode)
-            for stream in streams:
-                subtitles.extend(stream.subtitles)
-    except Exception as exc:
-        logger.error(f"Provider subtitles resolution failed ({provider.name}): {exc}")
-        return {"subtitles": []}
+    if not subtitles and streams:
+        for s in streams:
+            if s.subtitles:
+                subtitles.extend(s.subtitles)
 
     if not subtitles:
         return {"subtitles": []}
 
+    effective_provider = resolver.resolved_provider_name or provider_name or "stream"
     mapped_subtitles = _format_provider_subtitles(
         subtitles,
-        proxy=provider.name == "moviebox",
-        provider_name=provider.name,
+        proxy=effective_provider == "moviebox",
+        provider_name=effective_provider,
     )
 
     logger.info(f"Returning {len(mapped_subtitles)} subtitles for {info.title}")
     return {"subtitles": mapped_subtitles}
+
+
+async def _fetch_cinemeta_catalog(endpoint: str) -> list[dict]:
+    """Fetch catalog metadata directly from Cinemeta as fallback."""
+    url = f"{CINEMETA_BASE_URL}/{endpoint}"
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("metas", [])
+    except Exception as e:
+        logger.debug(f"Cinemeta catalog fetch failed ({url}): {e}")
+    return []
 
 
 async def handle_catalog(
@@ -198,7 +209,7 @@ async def handle_catalog(
     catalog_id: str,
     extra_args: dict | None = None,
 ) -> dict:
-    """Handle a Stremio catalog request."""
+    """Handle a Stremio catalog request with Cinemeta fallback."""
     session = Session()
     metas = []
 
@@ -206,23 +217,35 @@ async def handle_catalog(
         if "search" in (catalog_id or "") and extra_args and extra_args.get("search"):
             query = extra_args["search"]
             subject_type = SubjectType.TV_SERIES if content_type == "series" else SubjectType.MOVIES
-            search = Search(session, query, subject_type)
-            results = await search.get_content_model()
+            try:
+                search = Search(session, query, subject_type)
+                results = await search.get_content_model()
+                for item in results.items[:20]:
+                    meta = _item_to_meta_preview(item, content_type)
+                    if meta:
+                        metas.append(meta)
+            except Exception:
+                pass
 
-            for item in results.items[:20]:
-                meta = _item_to_meta_preview(item, content_type)
-                if meta:
-                    metas.append(meta)
+            if not metas:
+                metas = await _fetch_cinemeta_catalog(
+                    f"catalog/{content_type}/top/search={quote_plus(query)}.json"
+                )
 
         elif "trending" in (catalog_id or ""):
             subject_type = SubjectType.TV_SERIES if content_type == "series" else SubjectType.MOVIES
-            trending = Trending(session, subject_type)
-            results = await trending.get_content_model()
+            try:
+                trending = Trending(session, subject_type)
+                results = await trending.get_content_model()
+                for item in results.items[:20]:
+                    meta = _item_to_meta_preview(item, content_type)
+                    if meta:
+                        metas.append(meta)
+            except Exception:
+                pass
 
-            for item in results.items[:20]:
-                meta = _item_to_meta_preview(item, content_type)
-                if meta:
-                    metas.append(meta)
+            if not metas:
+                metas = await _fetch_cinemeta_catalog(f"catalog/{content_type}/top.json")
 
     except Exception as e:
         logger.error(f"Catalog handler error: {e}")

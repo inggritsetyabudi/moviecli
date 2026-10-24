@@ -6,6 +6,17 @@ import os
 import sys
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import click
 
 from moviebox_api import __version__
@@ -42,6 +53,7 @@ from moviebox_api.download import (
 )
 from moviebox_api.helpers import get_event_loop
 from moviebox_api.providers import (
+    DEFAULT_PROVIDER,
     ENV_VEGA_PROVIDER_KEY,
     ENVIRONMENT_PROVIDER_KEY,
     SUPPORTED_PROVIDERS,
@@ -288,6 +300,14 @@ def moviebox():
     is_flag=True,
     help="Do not prompt for movie confirmation",
 )
+@click.option(
+    "-p",
+    "--provider",
+    type=click.STRING,
+    default=os.getenv(ENVIRONMENT_PROVIDER_KEY, DEFAULT_PROVIDER),
+    show_default=True,
+    help=_SOURCE_PROVIDER_HELP,
+)
 @click.help_option("-h", "--help")
 def download_movie_command(
     title: str,
@@ -306,6 +326,7 @@ def download_movie_command(
     quiet: bool,
     yes: bool,
     stream_via: bool = False,
+    provider: str = DEFAULT_PROVIDER,
     **download_runner_params,
 ):
     """Search and download or stream movie."""
@@ -328,6 +349,7 @@ def download_movie_command(
             movie_filename_tmpl=movie_filename_tmpl,
             caption_filename_tmpl=caption_filename_tmpl,
             stream_via=stream_via,
+            provider=provider,
             ignore_missing_caption=ignore_missing_caption,
             **process_download_runner_params(download_runner_params),
         )
@@ -575,6 +597,14 @@ def download_movie_command(
     is_flag=True,
     help="Do not prompt for tv-series confirmation",
 )
+@click.option(
+    "-p",
+    "--provider",
+    type=click.STRING,
+    default=os.getenv(ENVIRONMENT_PROVIDER_KEY, DEFAULT_PROVIDER),
+    show_default=True,
+    help=_SOURCE_PROVIDER_HELP,
+)
 @click.help_option("-h", "--help")
 def download_tv_series_command(
     title: str,
@@ -598,6 +628,7 @@ def download_tv_series_command(
     yes: bool,
     stream_via: str | None,
     auto_mode: bool,
+    provider: str = DEFAULT_PROVIDER,
     **download_runner_params,
 ):
     """Search and download or stream tv series."""
@@ -623,6 +654,7 @@ def download_tv_series_command(
             episode_filename_tmpl=episode_filename_tmpl,
             caption_filename_tmpl=caption_filename_tmpl,
             stream_via=stream_via,
+            provider=provider,
             ignore_missing_caption=ignore_missing_caption,
             auto_mode=auto_mode,
             format=format,
@@ -706,7 +738,7 @@ def secret_status_command():
     "-p",
     "--provider",
     type=click.STRING,
-    default=os.getenv(ENVIRONMENT_PROVIDER_KEY, "moviebox"),
+    default=os.getenv(ENVIRONMENT_PROVIDER_KEY, DEFAULT_PROVIDER),
     show_default=True,
     help=_SOURCE_PROVIDER_HELP,
 )

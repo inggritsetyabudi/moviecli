@@ -23,12 +23,16 @@ def _normalise_title_key(value: str) -> str:
 
 
 def _resolve_title_filter(title: str, available_titles: list[str]) -> str | None:
-    if title in available_titles:
-        return title
-
-    target_key = _normalise_title_key(title)
-    if not target_key:
+    if not available_titles:
         return None
+
+    clean_title = title.strip("'\"")
+    if clean_title in available_titles:
+        return clean_title
+
+    target_key = _normalise_title_key(clean_title)
+    if not target_key:
+        return available_titles[0]
 
     for candidate in available_titles:
         if _normalise_title_key(candidate) == target_key:
@@ -38,7 +42,7 @@ def _resolve_title_filter(title: str, available_titles: list[str]) -> str | None
         if target_key in _normalise_title_key(candidate):
             return candidate
 
-    tokens = re.findall(r"[a-z0-9]+", title.lower())
+    tokens = re.findall(r"[a-z0-9]+", clean_title.lower())
     tokens = [token for token in tokens if token not in {"the", "now", "new", "and", "of"}]
     if tokens:
         scored: list[tuple[int, str]] = []
@@ -52,7 +56,7 @@ def _resolve_title_filter(title: str, available_titles: list[str]) -> str | None
             scored.sort(key=lambda entry: entry[0], reverse=True)
             return scored[0][1]
 
-    return None
+    return available_titles[0] if available_titles else None
 
 
 @click.command(context_settings=command_context_settings)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -199,9 +200,12 @@ def source_anime_command(
     if subtitle_entries:
         click.echo(f"Subtitles: {len(subtitle_entries)}")
         for index, subtitle_entry in enumerate(subtitle_entries, start=1):
+            label = str(subtitle_entry.get('label') or '')
+            enc = sys.stdout.encoding or 'utf-8'
+            safe_label = label.encode(enc, errors='replace').decode(enc)
             click.echo(
                 f"  {index}. {subtitle_entry['source']} [{subtitle_entry['language_id']}] "
-                f"{subtitle_entry['label']}"
+                f"{safe_label}"
             )
 
 

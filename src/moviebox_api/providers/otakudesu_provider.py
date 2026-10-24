@@ -11,6 +11,7 @@ MOVIEBOX_OTAKUDESU_URLS if it comes back.
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 from bs4 import BeautifulSoup
@@ -86,42 +87,46 @@ class OtakudesuProvider(BaseAnimeProvider):
         soup = BeautifulSoup(html, 'html.parser')
         subtitles = extract_subtitle_links(html)
         streams: list[ProviderStream] = []
-
-        for download_url, quality_label, source_label in self._download_links(soup):
-            streams.extend(
-                await self.expand_streams(
-                    url=download_url,
-                    source=source_label,
-                    quality=quality_label,
+        async def _expand(u: str, src: str, q: str | None) -> list[ProviderStream]:
+            try:
+                return await self.expand_streams(
+                    url=u,
+                    source=src,
+                    quality=q,
                     referer=episode_url,
                     subtitles=subtitles,
                 )
-            )
+            except Exception:
+                return [
+                    self.make_stream(
+                        url=u,
+                        source=src,
+                        quality=q,
+                        headers={"Referer": episode_url},
+                        subtitles=subtitles,
+                    )
+                ]
+
+        tasks = []
+        for download_url, quality_label, source_label in self._download_links(soup):
+            tasks.append(_expand(download_url, source_label, quality_label))
 
         for iframe in soup.select('iframe[src]'):
             src = str(iframe.get('src') or '').strip()
             if not src or 'facebook.com' in src:
                 continue
-            streams.extend(
-                await self.expand_streams(
-                    url=src,
-                    source='otakudesu:embed',
-                    referer=episode_url,
-                    subtitles=subtitles,
-                )
-            )
+            tasks.append(_expand(src, 'otakudesu:embed', None))
 
-        if not streams:
+        if not tasks:
             embed_url = first_http_url(html)
             if embed_url and 'facebook.com' not in embed_url:
-                streams.extend(
-                    await self.expand_streams(
-                        url=embed_url,
-                        source='otakudesu:embed',
-                        referer=episode_url,
-                        subtitles=subtitles,
-                    )
-                )
+                tasks.append(_expand(embed_url, 'otakudesu:embed', None))
+
+        if tasks:
+            nested_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for res in nested_results:
+                if isinstance(res, list):
+                    streams.extend(res)
 
         return sorted(
             dedupe_streams(streams),

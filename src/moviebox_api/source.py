@@ -3,7 +3,12 @@
 import os
 
 from moviebox_api.constants import SubjectType
-from moviebox_api.providers import SUPPORTED_ANIME_PROVIDERS, get_provider, normalize_provider_name
+from moviebox_api.providers import (
+    DEFAULT_PROVIDER,
+    SUPPORTED_ANIME_PROVIDERS,
+    get_provider,
+    normalize_provider_name,
+)
 from moviebox_api.providers.models import ProviderSearchResult, ProviderStream, ProviderSubtitle
 
 # Vega modules verified live on 2026-10-24 (search_best_match + resolve,
@@ -121,7 +126,7 @@ class SourceResolver:
         else:
             primary_error = None
 
-        primary_name = normalize_provider_name(self.provider_name) if self.provider_name else "moviebox"
+        primary_name = normalize_provider_name(self.provider_name) if self.provider_name else DEFAULT_PROVIDER
         if result is not None and (result[0] is not None and result[1]):
             self.resolved_provider_name = primary_name
             return result
@@ -130,11 +135,9 @@ class SourceResolver:
         # dead or to be a single Vega module: moviebox (search 0 results,
         # play 403 invalid region), yflix (empty reply), and any vega
         # module (one module failing must not end the request when another
-        # verified module can serve the same title).  Other explicit
-        # providers keep the old behaviour: their error propagates and an
-        # empty result stays empty.
+        # verified module can serve the same title), plus rebahin.
         primary_module = _vega_module_name(primary_name)
-        is_fallback_eligible = primary_name in ("moviebox", "yflix") or primary_module is not None
+        is_fallback_eligible = primary_name in ("moviebox", "yflix", "rebahin") or primary_module is not None
         if not is_fallback_eligible:
             if primary_error is not None:
                 raise primary_error
@@ -146,9 +149,10 @@ class SourceResolver:
             if primary_error is not None
             else f"{primary_name} returned no playable streams"
         )
-        for candidate in vega_fallback_chain():
-            # Skip the module already tried as the primary provider:
-            # "vega" is the default autoEmbed module.
+        for candidate in vega_fallback_chain() + ("rebahin",):
+            # Skip the module or provider already tried as the primary:
+            if candidate == primary_name:
+                continue
             if primary_module is not None and _vega_module_name(candidate) == primary_module:
                 continue
             try:

@@ -34,9 +34,8 @@ class OploversProvider(BaseAnimeProvider):
     env_keys = ('MOVIEBOX_OPLOVERS_URLS', 'MOVIEBOX_OPLOVERS_URL')
     default_base_urls = ('https://coba.oploverz.ltd',)
     # The front-end host is dead at the moment, so site fetches must fail
-    # fast instead of burning the full 25s provider timeout twice (async
-    # + sync fallback) before the working API path is tried.
-    _site_timeout = httpx.Timeout(12.0, connect=6.0)
+    # fast instead of burning long timeouts before the working API path is tried.
+    _site_timeout = httpx.Timeout(3.0, connect=1.5)
     api_env_keys = ('MOVIEBOX_OPLOVERS_API_URLS', 'MOVIEBOX_OPLOVERS_API_URL')
     default_api_base_urls = ('https://backapi.oploverz.ac',)
     _series_index_cache: ClassVar[tuple[float, list[tuple[str, str]]] | None] = None
@@ -56,9 +55,6 @@ class OploversProvider(BaseAnimeProvider):
         if subject_type != SubjectType.ANIME:
             return []
 
-        # The front-end host (coba.oploverz.ltd) is currently dead, so the
-        # index path raises instead of returning [].  Fall through to the
-        # API path instead of letting that failure end the search.
         try:
             indexed_results = await self._search_via_index(query, year=year, limit=limit)
         except Exception:
@@ -88,16 +84,19 @@ class OploversProvider(BaseAnimeProvider):
     ) -> list[ProviderStream]:
         slug = str(item.payload.get('slug') or '').strip()
         content_kind = str(item.payload.get('content_kind') or 'series').strip().lower() or 'series'
-        try:
-            payload = await self._content_payload(content_kind, slug)
-        except Exception:
-            payload = {}
-        episodes = payload.get('episodes') if isinstance(payload, dict) else []
-        if (not isinstance(episodes, list) or not episodes) and content_kind == 'series' and slug:
-            # Front-end host is dead, but the API still serves episodes
-            # (GET /api/series/<slug>/episodes, newest first, 10 per page).
+        episodes = []
+        if content_kind == 'series' and slug:
+            # API serves episodes fast (GET /api/series/<slug>/episodes)
             api_episode = await self._api_episode(slug, episode if episode > 0 else 1)
-            episodes = [api_episode] if api_episode else []
+            if api_episode:
+                episodes = [api_episode]
+
+        if not episodes:
+            try:
+                payload = await self._content_payload(content_kind, slug)
+                episodes = payload.get('episodes') if isinstance(payload, dict) else []
+            except Exception:
+                episodes = []
         if not isinstance(episodes, list) or not episodes:
             return []
 
@@ -120,6 +119,18 @@ class OploversProvider(BaseAnimeProvider):
             referer = f"{self.base_urls()[0]}/series/{slug}/episode/{target_episode.get('episodeNumber')}"
         streams: list[ProviderStream] = []
 
+        async def _expand(u: str, src: str, q: str | None) -> list[ProviderStream]:
+            try:
+                return await self.expand_streams(
+                    url=u,
+                    source=src,
+                    quality=q,
+                    referer=referer,
+                )
+            except Exception:
+                return [self.make_stream(url=u, source=src, quality=q, headers={"Referer": referer})]
+
+        tasks = []
         for entry in target_episode.get('streamUrl') or []:
             if not isinstance(entry, dict):
                 continue
@@ -127,14 +138,7 @@ class OploversProvider(BaseAnimeProvider):
             if not url:
                 continue
             raw_source = str(entry.get('source') or 'stream').strip().lower() or 'stream'
-            streams.extend(
-                await self.expand_streams(
-                    url=url,
-                    source=f'oplovers:{raw_source}',
-                    quality=str(entry.get('source') or '').strip() or None,
-                    referer=referer,
-                )
-            )
+            tasks.append(_expand(url, f'oplovers:{raw_source}', str(entry.get('source') or '').strip() or None))
 
         for format_entry in target_episode.get('downloadUrl') or []:
             if not isinstance(format_entry, dict):
@@ -151,14 +155,13 @@ class OploversProvider(BaseAnimeProvider):
                     if not url:
                         continue
                     host = str(download_link.get('host') or 'download').strip().lower() or 'download'
-                    streams.extend(
-                        await self.expand_streams(
-                            url=url,
-                            source=f'oplovers:{host}',
-                            quality=quality or format_label or None,
-                            referer=referer,
-                        )
-                    )
+                    tasks.append(_expand(url, f'oplovers:{host}', quality or format_label or None))
+
+        if tasks:
+            nested_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for res in nested_results:
+                if isinstance(res, list):
+                    streams.extend(res)
 
         resolved_streams = dedupe_streams(streams)
         resolved_streams = self._prefer_non_gdrive_streams(resolved_streams)

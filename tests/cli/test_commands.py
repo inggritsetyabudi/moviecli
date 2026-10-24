@@ -1,16 +1,26 @@
+import os
 import subprocess
+import sys
 
 import pytest
 
 
 def run_system_command(command: str) -> int:
     try:
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        if sys.platform == "win32":
+            import re
+            command = re.sub(r"'([^']*)'", r'"\1"', command)
         result = subprocess.run(
-            "python -m moviebox_api " + command,
+            f'"{sys.executable}" -m moviebox_api ' + command,
             shell=True,
             check=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
+            env=env,
         )
         return result.returncode
     except subprocess.CalledProcessError as e:
