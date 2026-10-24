@@ -469,13 +469,14 @@ class BaseAnimeProvider(BaseStreamProvider):
         target_url: str,
         *,
         headers: dict[str, str],
+        timeout: httpx.Timeout | None = None,
     ) -> httpx.Response:
         """Run a blocking GET request for providers that misbehave on async clients."""
 
         with httpx.Client(
             headers=headers,
             follow_redirects=True,
-            timeout=_PROVIDER_TIMEOUT,
+            timeout=timeout or _PROVIDER_TIMEOUT,
         ) as client:
             response = client.get(target_url)
         response.raise_for_status()
@@ -487,6 +488,7 @@ class BaseAnimeProvider(BaseStreamProvider):
         *,
         referer: str | None = None,
         accept: str | None = None,
+        timeout: httpx.Timeout | None = None,
     ) -> tuple[httpx.Response, str]:
         """Request HTML or JSON content while rotating candidate domains."""
 
@@ -497,33 +499,43 @@ class BaseAnimeProvider(BaseStreamProvider):
             headers["Referer"] = referer or base_url
             if accept:
                 headers["Accept"] = accept
-            for _attempt in range(2):
+            # One async attempt plus one sync fallback per domain.  The old
+            # code retried that whole pair a second time, so a single dead
+            # domain (e.g. oplovers' old front-end host) could hang a search
+            # for ~100s before the next fallback was even tried.
+            try:
+                async with httpx.AsyncClient(
+                    headers=headers,
+                    follow_redirects=True,
+                    timeout=timeout or _PROVIDER_TIMEOUT,
+                ) as client:
+                    response = await client.get(target_url)
+                response.raise_for_status()
+                return response, base_url
+            except Exception as exc:
+                errors.append(f"{target_url}: async {exc}")
                 try:
-                    async with httpx.AsyncClient(
+                    response = await asyncio.to_thread(
+                        self._request_sync,
+                        target_url,
                         headers=headers,
-                        follow_redirects=True,
-                        timeout=_PROVIDER_TIMEOUT,
-                    ) as client:
-                        response = await client.get(target_url)
-                    response.raise_for_status()
+                        timeout=timeout or _PROVIDER_TIMEOUT,
+                    )
                     return response, base_url
-                except Exception as exc:
-                    errors.append(f"{target_url}: async {exc}")
-                    try:
-                        response = await asyncio.to_thread(
-                            self._request_sync,
-                            target_url,
-                            headers=headers,
-                        )
-                        return response, base_url
-                    except Exception as sync_exc:
-                        errors.append(f"{target_url}: sync {sync_exc}")
-                        await asyncio.sleep(0.1)
+                except Exception as sync_exc:
+                    errors.append(f"{target_url}: sync {sync_exc}")
+                    continue
 
         raise RuntimeError("; ".join(errors) or f"Failed to fetch {path_or_url}")
 
-    async def _request_text(self, path_or_url: str, *, referer: str | None = None) -> tuple[str, str]:
-        response, base_url = await self._request(path_or_url, referer=referer)
+    async def _request_text(
+        self,
+        path_or_url: str,
+        *,
+        referer: str | None = None,
+        timeout: httpx.Timeout | None = None,
+    ) -> tuple[str, str]:
+        response, base_url = await self._request(path_or_url, referer=referer, timeout=timeout)
         return response.text, base_url
 
     async def _request_json(
@@ -532,8 +544,11 @@ class BaseAnimeProvider(BaseStreamProvider):
         *,
         referer: str | None = None,
         accept: str = "application/json,text/plain;q=0.9,*/*;q=0.8",
+        timeout: httpx.Timeout | None = None,
     ) -> tuple[Any, str]:
-        response, base_url = await self._request(path_or_url, referer=referer, accept=accept)
+        response, base_url = await self._request(
+            path_or_url, referer=referer, accept=accept, timeout=timeout
+        )
         return response.json(), base_url
 
     async def _post_text(

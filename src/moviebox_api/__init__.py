@@ -75,6 +75,13 @@ if __name__ == "__main__":
 import logging
 from importlib import metadata
 
+# httpx crashes on bracketed IPv6 entries in NO_PROXY (e.g. "[::1]") at
+# client creation time, which breaks every provider at once.  Normalise the
+# in-process variables before any httpx client is built.
+from moviebox_api.proxy_env import sanitize_no_proxy_env
+
+sanitize_no_proxy_env()
+
 try:
     __version__ = metadata.version("moviebox-api")
 except metadata.PackageNotFoundError:

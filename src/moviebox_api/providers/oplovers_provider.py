@@ -9,6 +9,7 @@ from difflib import SequenceMatcher
 from typing import Any, ClassVar
 from urllib.parse import urlparse
 
+import httpx
 from bs4 import BeautifulSoup
 
 from moviebox_api.constants import SubjectType
@@ -32,6 +33,10 @@ class OploversProvider(BaseAnimeProvider):
     name = 'oplovers'
     env_keys = ('MOVIEBOX_OPLOVERS_URLS', 'MOVIEBOX_OPLOVERS_URL')
     default_base_urls = ('https://coba.oploverz.ltd',)
+    # The front-end host is dead at the moment, so site fetches must fail
+    # fast instead of burning the full 25s provider timeout twice (async
+    # + sync fallback) before the working API path is tried.
+    _site_timeout = httpx.Timeout(12.0, connect=6.0)
     api_env_keys = ('MOVIEBOX_OPLOVERS_API_URLS', 'MOVIEBOX_OPLOVERS_API_URL')
     default_api_base_urls = ('https://backapi.oploverz.ac',)
     _series_index_cache: ClassVar[tuple[float, list[tuple[str, str]]] | None] = None
@@ -51,11 +56,20 @@ class OploversProvider(BaseAnimeProvider):
         if subject_type != SubjectType.ANIME:
             return []
 
-        indexed_results = await self._search_via_index(query, year=year, limit=limit)
+        # The front-end host (coba.oploverz.ltd) is currently dead, so the
+        # index path raises instead of returning [].  Fall through to the
+        # API path instead of letting that failure end the search.
+        try:
+            indexed_results = await self._search_via_index(query, year=year, limit=limit)
+        except Exception:
+            indexed_results = []
         if indexed_results:
             return indexed_results[:limit]
 
-        api_results = await self._search_via_api(query, year=year, limit=limit)
+        try:
+            api_results = await self._search_via_api(query, year=year, limit=limit)
+        except Exception:
+            api_results = []
         return api_results[:limit]
 
     async def list_trending(self, *, limit: int = 20) -> list[ProviderSearchResult]:
@@ -74,8 +88,16 @@ class OploversProvider(BaseAnimeProvider):
     ) -> list[ProviderStream]:
         slug = str(item.payload.get('slug') or '').strip()
         content_kind = str(item.payload.get('content_kind') or 'series').strip().lower() or 'series'
-        payload = await self._content_payload(content_kind, slug)
+        try:
+            payload = await self._content_payload(content_kind, slug)
+        except Exception:
+            payload = {}
         episodes = payload.get('episodes') if isinstance(payload, dict) else []
+        if (not isinstance(episodes, list) or not episodes) and content_kind == 'series' and slug:
+            # Front-end host is dead, but the API still serves episodes
+            # (GET /api/series/<slug>/episodes, newest first, 10 per page).
+            api_episode = await self._api_episode(slug, episode if episode > 0 else 1)
+            episodes = [api_episode] if api_episode else []
         if not isinstance(episodes, list) or not episodes:
             return []
 
@@ -252,7 +274,9 @@ class OploversProvider(BaseAnimeProvider):
         if cached and cached[0] > now:
             return list(cached[1])
 
-        html, base_url = await self._request_text('/series', referer=self.base_urls()[0])
+        html, base_url = await self._request_text(
+            '/series', referer=self.base_urls()[0], timeout=self._site_timeout
+        )
         soup = BeautifulSoup(html, 'html.parser')
         entries: list[tuple[str, str]] = []
         seen: set[str] = set()
@@ -308,7 +332,9 @@ class OploversProvider(BaseAnimeProvider):
         )
 
     async def _content_payload(self, content_kind: str, slug: str) -> dict[str, Any]:
-        payload, _base_url = await self._request_json(f'/{content_kind}/{slug}/__data.json')
+        payload, _base_url = await self._request_json(
+            f'/{content_kind}/{slug}/__data.json', timeout=self._site_timeout
+        )
         nodes = payload.get('nodes') if isinstance(payload, dict) else []
         if not isinstance(nodes, list) or len(nodes) < 3:
             return {}
@@ -328,10 +354,30 @@ class OploversProvider(BaseAnimeProvider):
         year: int | None,
         limit: int,
     ) -> list[ProviderSearchResult]:
+        # Fast path first: the API serves a series directly by slug
+        # (GET /api/series/<slug>), verified live for e.g. "one-piece".
+        # The old code skipped this and instead returned the first page of
+        # the unfiltered series list, whatever the query was.
+        slug = re.sub(r'[^a-z0-9]+', '-', query.strip().lower()).strip('-')
+        if slug:
+            try:
+                detail = await self._api_json(f'/api/series/{slug}')
+            except Exception:
+                detail = {}
+            entry = detail.get('data') if isinstance(detail, dict) else None
+            if isinstance(entry, dict) and str(entry.get('slug') or '').strip():
+                mapped = self._result_from_api_entry(entry)
+                if year is None or mapped.year == year:
+                    return [mapped]
+
+        # Fallback: scan the paginated series list, but only keep entries
+        # that actually match the query, and stop after 20 pages so a
+        # non-matching title cannot turn into a 100-page crawl.  Note the
+        # API ignores the `search` parameter, so filtering must happen here.
         results: list[ProviderSearchResult] = []
         page = 1
-        while len(results) < limit:
-            search_path = f'/api/series?search={query.strip().replace(" ", "+")}&page={page}'
+        while len(results) < limit and page <= 20:
+            search_path = f'/api/series?page={page}'
             payload = await self._api_json(search_path)
             items = payload.get('data') if isinstance(payload, dict) else []
             if not isinstance(items, list) or not items:
@@ -342,6 +388,8 @@ class OploversProvider(BaseAnimeProvider):
                 mapped = self._result_from_api_entry(entry)
                 if year is not None and mapped.year != year:
                     continue
+                if self._title_score(query, mapped.title) < 0.42:
+                    continue
                 results.append(mapped)
                 if len(results) >= limit:
                     break
@@ -351,6 +399,7 @@ class OploversProvider(BaseAnimeProvider):
             if int(meta.get('currentPage') or 0) >= int(meta.get('lastPage') or 0):
                 break
             page += 1
+        results.sort(key=lambda item: self._result_score(query, item), reverse=True)
         return results[:limit]
 
     async def _api_json(self, path_or_url: str) -> dict[str, Any]:
@@ -365,6 +414,45 @@ class OploversProvider(BaseAnimeProvider):
             if isinstance(payload, dict):
                 return payload
         raise RuntimeError('; '.join(errors) or f'Failed to fetch {path_or_url}')
+
+    async def _api_episode(self, slug: str, requested_episode: int) -> dict[str, Any] | None:
+        """Fetch one episode from the API, or None if it cannot be found.
+
+        Episodes are listed newest-first, 10 per page, so the page holding
+        episode N is derived from the series' total episode count.
+        """
+
+        try:
+            detail = await self._api_json(f'/api/series/{slug}')
+        except Exception:
+            return None
+        entry = detail.get('data') if isinstance(detail, dict) else None
+        total = 0
+        if isinstance(entry, dict):
+            try:
+                total = int(entry.get('totalEpisodes') or 0)
+            except (TypeError, ValueError):
+                total = 0
+        page = (total - requested_episode) // 10 + 1 if total and requested_episode <= total else 1
+        if page < 1:
+            page = 1
+        try:
+            payload = await self._api_json(f'/api/series/{slug}/episodes?page={page}')
+        except Exception:
+            return None
+        items = payload.get('data') if isinstance(payload, dict) else []
+        if not isinstance(items, list):
+            return None
+        for episode in items:
+            if not isinstance(episode, dict):
+                continue
+            try:
+                number = int(str(episode.get('episodeNumber') or '0'))
+            except ValueError:
+                continue
+            if number == requested_episode:
+                return episode
+        return None
 
     def _result_from_content_payload(
         self,

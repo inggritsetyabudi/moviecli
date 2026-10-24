@@ -18,8 +18,8 @@ Unofficial Python client for searching, streaming, and downloading movies, TV ep
 ### Linux / macOS
 
 ```bash
-git clone https://github.com/FajarMelfiano/MOVIEBOX-CLIENT
-cd MOVIEBOX-CLIENT
+git clone https://github.com/inggritsetyabudi/moviecli
+cd moviecli
 chmod +x install.sh
 ./install.sh
 ```
@@ -27,16 +27,16 @@ chmod +x install.sh
 ### Windows (PowerShell)
 
 ```powershell
-git clone https://github.com/FajarMelfiano/MOVIEBOX-CLIENT
-cd MOVIEBOX-CLIENT
+git clone https://github.com/inggritsetyabudi/moviecli
+cd moviecli
 .\install.ps1
 ```
 
 ### Windows (CMD)
 
 ```cmd
-git clone https://github.com/FajarMelfiano/MOVIEBOX-CLIENT
-cd MOVIEBOX-CLIENT
+git clone https://github.com/inggritsetyabudi/moviecli
+cd moviecli
 install.bat
 ```
 
@@ -44,8 +44,8 @@ install.bat
 
 ```bash
 pkg install git -y
-git clone https://github.com/FajarMelfiano/MOVIEBOX-CLIENT
-cd MOVIEBOX-CLIENT
+git clone https://github.com/inggritsetyabudi/moviecli
+cd moviecli
 chmod +x install-termux.sh
 ./install-termux.sh
 ```
@@ -200,6 +200,57 @@ Manual completion and auto-venv setup instructions are documented in `INSTALL.md
 - Supported movie/TV providers: `moviebox`, `yflix`, `vega`.
 - Supported anime providers: `samehadaku`, `oplovers`, `otakudesu`.
 - `nepu` and `tmdb_embed` are removed from active provider flow.
+
+### Provider status (verified live 2026-10-24)
+
+- `moviebox` (default) is currently unreliable: its search endpoint returns
+  zero results for every title, and its play/download endpoints answer
+  `403 invalid region` from several networks, even though its
+  trending/popular/home endpoints still work. `source-streams` (and the
+  TUI source page) therefore fall back automatically when a
+  `moviebox` resolution returns no playable streams, and print the
+  provider that actually produced the result. `download-movie` /
+  `download-series` still go through the native Moviebox API, so a
+  download can still fail with the region error while a `vega` stream
+  for the same title works.
+- Replacement providers (verified live 2026-10-24, movie "Interstellar"
+  and series "Breaking Bad" S1E1, via `search_best_match` + resolve):
+  `source-streams` now tries this Vega chain in order and stops at the
+  first module with playable streams — `vega` (autoEmbed, 6 streams for
+  Interstellar, 7 for Breaking Bad), `vega:4khdhub` (2 / 2),
+  `vega:castle` (7 / 2), `vega:1flex` (8 / 4). Override the chain with
+  `MOVIEBOX_VEGA_FALLBACKS="vega,vega:4khdhub"` (comma list). Any of
+  these can also be picked directly, e.g.
+  `moviebox source-streams "Interstellar" -p vega:4khdhub`.
+- `yflix` currently answers with an empty reply from `yflix.to` and now
+  falls back through the same Vega chain instead of failing outright;
+  it only errors when every chain module fails too.
+- Tested and NOT adopted as standalone replacements (2026-10-24):
+  `yflix.cfd` is only an SEO landing page (its `/ajax/film/search`
+  answers 404), `sflix.to` / `flixhq.to` timed out from this network,
+  `lookmovie.la` answered 403, `hdtoday.tv` answered with an empty
+  reply, and VidSrc embeds (`vid-src.top`, `embed.vidsrc.pk`) need an
+  IMDb/TMDB id and return a player page, not a direct stream — they add
+  no title search over what the Vega modules already do. Other active
+  Vega modules that failed the same Interstellar test and are therefore
+  NOT in the chain: 1cinevood, katmovies, mod, uhd, movieBoxWeb, gokuHD,
+  eonMovies, movies4u (timeout), hdhub4u, showbox (0 streams),
+  everything (0 streams), vega module, drive, world4u, netflixMirror,
+  primeMirror, disneyMirror, torrentio (resolve error), zeefliz
+  (runtime error).
+- `samehadaku` and `otakudesu` (now `otakudesu.blog` only; the old
+  `otakudesu.pl` domain answers with an empty reply) work for anime
+  search and streams.
+- `oplovers` works again but is slow: its old front-end host
+  (`coba.oploverz.ltd`) is dead, so search falls back to the
+  `backapi.oploverz.ac` API (direct slug lookup, then a filtered scan)
+  and episode streams fall back to the API episodes endpoint. Expect
+  roughly 25-40 seconds per search/resolve instead of failing outright.
+- Bracketed IPv6 entries in `NO_PROXY`/`no_proxy` (e.g. `[::1]`, common
+  in containers) used to crash every httpx client in this tool with
+  `InvalidURL: Invalid port: ':1]'` before any request was made. The
+  package now strips those brackets from the in-process variables at
+  import time, so that environment shape no longer breaks the tool.
 - `yflix` token generation requires `node` in `PATH`.
 - Dynamic Vega modules execute remote provider logic; use trusted manifests only.
 - Anime providers are Indonesian-first sources; provider subtitles default to Indonesian and automatically fall back to external subtitle APIs when provider subtitles are missing.
@@ -226,4 +277,6 @@ Manual completion and auto-venv setup instructions are documented in `INSTALL.md
 ```
 
 ## License
-See `LICENSE`.
+See `LICENSE`. Original work © 2026 Fajar Melfiano Obese Afoan Toan;
+this `moviecli` fork and its modifications © 2026 Inggrit Setya Budi,
+both under the Apache License 2.0.

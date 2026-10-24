@@ -21,14 +21,11 @@ MIRROR_HOSTS = (
     # "moviebox.ng",
     "h5.aoneroom.com",
     "movieboxapp.in",
-    "moviebox.pk",
-    "moviebox.ph",
-    "moviebox.id",
-    # "fmoviesunblocked.net"
-    "v.moviebox.ph",
-    "netnaija.video",
-    # "sflix.film",
-    # "netnaija.com"
+    # NOTE (2026-10-24, verified live): moviebox.pk, moviebox.id,
+    # v.moviebox.ph and netnaija.video no longer answer the API at all
+    # (empty reply / timeout), and moviebox.ph now redirects to
+    # movieboxhd.net, so it is listed under its current name instead.
+    "movieboxhd.net",
 )
 """Mirror domains/subdomains of Moviebox"""
 

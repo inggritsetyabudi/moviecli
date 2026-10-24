@@ -1006,7 +1006,8 @@ class InteractiveTextualApp(App[None]):
                     episode=episode,
                 )
             else:
-                resolved_item, streams, subtitles = await SourceResolver(provider_name=provider_name).resolve(
+                _resolver = SourceResolver(provider_name=provider_name)
+                resolved_item, streams, subtitles = await _resolver.resolve(
                     title=self.selected_item.title,
                     subject_type=self.selected_item.subjectType,
                     year=self.selected_item.year,
@@ -1015,6 +1016,9 @@ class InteractiveTextualApp(App[None]):
                     imdb_id=self.selected_item.imdbId,
                     tmdb_id=self.selected_item.tmdbId,
                 )
+                # moviebox -> vega fallback inside the resolver must be
+                # visible in the UI, otherwise it looks like moviebox worked.
+                provider_name = _resolver.resolved_provider_name or provider_name
         except Exception as exc:
             if not silent:
                 self._set_status(f"Provider resolution failed: {exc}")

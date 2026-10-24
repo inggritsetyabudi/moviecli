@@ -787,15 +787,30 @@ def source_streams_command(
         )
     except Exception as exc:
         click.echo(f"Provider resolution failed ({selected_provider}): {exc}")
+        if selected_provider == "yflix":
+            click.echo(
+                "Hint: yflix.to currently answers with an empty reply and every "
+                "Vega fallback module failed too; try -p vega:<module> manually "
+                "(see 'moviebox vega-providers')."
+            )
         return
+
+    actual_provider = getattr(resolver, "resolved_provider_name", None) or selected_provider
 
     if item is None:
         click.echo("No matching item found.")
         return
 
+    if actual_provider != selected_provider:
+        click.echo(
+            f"Note: {selected_provider} returned no playable streams, "
+            f"so this fell back to {actual_provider}."
+        )
+
     if json_output:
         payload = {
-            "provider": selected_provider,
+            "provider": actual_provider,
+            "requested_provider": selected_provider,
             "item": {
                 "id": item.id,
                 "title": item.title,
@@ -835,7 +850,7 @@ def source_streams_command(
         click.echo(json.dumps(payload, indent=2))
         return
 
-    click.echo(f"Provider: {selected_provider}")
+    click.echo(f"Provider: {actual_provider}")
     click.echo(f"Item: {item.title}{f' ({item.year})' if item.year else ''}")
     click.echo(f"Page: {item.page_url}")
     click.echo(f"Streams: {len(streams)}")

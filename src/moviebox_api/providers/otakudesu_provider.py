@@ -1,9 +1,12 @@
 """Otakudesu anime provider.
 
-Chosen as the third anime provider because the current public domain (otakudesu.pl)
-is reachable without a JavaScript gate on search/detail pages and exposes predictable
-series metadata and episode links, unlike the Kuronime/Neonime options observed during
-implementation.
+Chosen as the third anime provider because the current public domain
+(otakudesu.blog) is reachable without a JavaScript gate on search/detail
+pages and exposes predictable series metadata and episode links, unlike
+the Kuronime/Neonime options observed during implementation.  The old
+otakudesu.pl domain was dropped from the defaults in 2026-10-24 after it
+started answering with an empty reply; it can still be re-added with
+MOVIEBOX_OTAKUDESU_URLS if it comes back.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ class OtakudesuProvider(BaseAnimeProvider):
 
     name = 'otakudesu'
     env_keys = ('MOVIEBOX_OTAKUDESU_URLS', 'MOVIEBOX_OTAKUDESU_URL')
-    default_base_urls = ('https://otakudesu.blog', 'https://otakudesu.pl')
+    default_base_urls = ('https://otakudesu.blog',)
 
     async def search(
         self,
@@ -221,7 +224,7 @@ class OtakudesuProvider(BaseAnimeProvider):
         if title_tag:
             raw = title_tag.get_text(' ', strip=True)
             cleaned = re.split(
-                "\s+(?:\||-|\u2013|\u2014)\s+",
+                r"\s+(?:\||-|\u2013|\u2014)\s+",
                 raw.split('?', maxsplit=1)[0],
                 maxsplit=1,
             )[0].strip()

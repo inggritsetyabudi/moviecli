@@ -1,0 +1,1061 @@
+diff --git a/LICENSE b/LICENSE
+index c051b21..343c714 100644
+--- a/LICENSE
++++ b/LICENSE
+@@ -187,6 +187,8 @@
+       identification within third-party archives.
+ 
+    Copyright 2026 Fajar Melfiano Obese Afoan Toan
++   Copyright 2026 Inggrit Setya Budi (moviecli fork: modifications and
++   new provider fallback work, 2026-10-24)
+ 
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+diff --git a/README.md b/README.md
+index 2083b08..38ec34c 100644
+--- a/README.md
++++ b/README.md
+@@ -18,8 +18,8 @@ Unofficial Python client for searching, streaming, and downloading movies, TV ep
+ ### Linux / macOS
+ 
+ ```bash
+-git clone https://github.com/FajarMelfiano/MOVIEBOX-CLIENT
+-cd MOVIEBOX-CLIENT
++git clone https://github.com/inggritsetyabudi/moviecli
++cd moviecli
+ chmod +x install.sh
+ ./install.sh
+ ```
+@@ -27,16 +27,16 @@ chmod +x install.sh
+ ### Windows (PowerShell)
+ 
+ ```powershell
+-git clone https://github.com/FajarMelfiano/MOVIEBOX-CLIENT
+-cd MOVIEBOX-CLIENT
++git clone https://github.com/inggritsetyabudi/moviecli
++cd moviecli
+ .\install.ps1
+ ```
+ 
+ ### Windows (CMD)
+ 
+ ```cmd
+-git clone https://github.com/FajarMelfiano/MOVIEBOX-CLIENT
+-cd MOVIEBOX-CLIENT
++git clone https://github.com/inggritsetyabudi/moviecli
++cd moviecli
+ install.bat
+ ```
+ 
+@@ -44,8 +44,8 @@ install.bat
+ 
+ ```bash
+ pkg install git -y
+-git clone https://github.com/FajarMelfiano/MOVIEBOX-CLIENT
+-cd MOVIEBOX-CLIENT
++git clone https://github.com/inggritsetyabudi/moviecli
++cd moviecli
+ chmod +x install-termux.sh
+ ./install-termux.sh
+ ```
+@@ -200,6 +200,57 @@ Manual completion and auto-venv setup instructions are documented in `INSTALL.md
+ - Supported movie/TV providers: `moviebox`, `yflix`, `vega`.
+ - Supported anime providers: `samehadaku`, `oplovers`, `otakudesu`.
+ - `nepu` and `tmdb_embed` are removed from active provider flow.
++
++### Provider status (verified live 2026-10-24)
++
++- `moviebox` (default) is currently unreliable: its search endpoint returns
++  zero results for every title, and its play/download endpoints answer
++  `403 invalid region` from several networks, even though its
++  trending/popular/home endpoints still work. `source-streams` (and the
++  TUI source page) therefore fall back automatically when a
++  `moviebox` resolution returns no playable streams, and print the
++  provider that actually produced the result. `download-movie` /
++  `download-series` still go through the native Moviebox API, so a
++  download can still fail with the region error while a `vega` stream
++  for the same title works.
++- Replacement providers (verified live 2026-10-24, movie "Interstellar"
++  and series "Breaking Bad" S1E1, via `search_best_match` + resolve):
++  `source-streams` now tries this Vega chain in order and stops at the
++  first module with playable streams — `vega` (autoEmbed, 6 streams for
++  Interstellar, 7 for Breaking Bad), `vega:4khdhub` (2 / 2),
++  `vega:castle` (7 / 2), `vega:1flex` (8 / 4). Override the chain with
++  `MOVIEBOX_VEGA_FALLBACKS="vega,vega:4khdhub"` (comma list). Any of
++  these can also be picked directly, e.g.
++  `moviebox source-streams "Interstellar" -p vega:4khdhub`.
++- `yflix` currently answers with an empty reply from `yflix.to` and now
++  falls back through the same Vega chain instead of failing outright;
++  it only errors when every chain module fails too.
++- Tested and NOT adopted as standalone replacements (2026-10-24):
++  `yflix.cfd` is only an SEO landing page (its `/ajax/film/search`
++  answers 404), `sflix.to` / `flixhq.to` timed out from this network,
++  `lookmovie.la` answered 403, `hdtoday.tv` answered with an empty
++  reply, and VidSrc embeds (`vid-src.top`, `embed.vidsrc.pk`) need an
++  IMDb/TMDB id and return a player page, not a direct stream — they add
++  no title search over what the Vega modules already do. Other active
++  Vega modules that failed the same Interstellar test and are therefore
++  NOT in the chain: 1cinevood, katmovies, mod, uhd, movieBoxWeb, gokuHD,
++  eonMovies, movies4u (timeout), hdhub4u, showbox (0 streams),
++  everything (0 streams), vega module, drive, world4u, netflixMirror,
++  primeMirror, disneyMirror, torrentio (resolve error), zeefliz
++  (runtime error).
++- `samehadaku` and `otakudesu` (now `otakudesu.blog` only; the old
++  `otakudesu.pl` domain answers with an empty reply) work for anime
++  search and streams.
++- `oplovers` works again but is slow: its old front-end host
++  (`coba.oploverz.ltd`) is dead, so search falls back to the
++  `backapi.oploverz.ac` API (direct slug lookup, then a filtered scan)
++  and episode streams fall back to the API episodes endpoint. Expect
++  roughly 25-40 seconds per search/resolve instead of failing outright.
++- Bracketed IPv6 entries in `NO_PROXY`/`no_proxy` (e.g. `[::1]`, common
++  in containers) used to crash every httpx client in this tool with
++  `InvalidURL: Invalid port: ':1]'` before any request was made. The
++  package now strips those brackets from the in-process variables at
++  import time, so that environment shape no longer breaks the tool.
+ - `yflix` token generation requires `node` in `PATH`.
+ - Dynamic Vega modules execute remote provider logic; use trusted manifests only.
+ - Anime providers are Indonesian-first sources; provider subtitles default to Indonesian and automatically fall back to external subtitle APIs when provider subtitles are missing.
+@@ -226,4 +277,6 @@ Manual completion and auto-venv setup instructions are documented in `INSTALL.md
+ ```
+ 
+ ## License
+-See `LICENSE`.
++See `LICENSE`. Original work © 2026 Fajar Melfiano Obese Afoan Toan;
++this `moviecli` fork and its modifications © 2026 Inggrit Setya Budi,
++both under the Apache License 2.0.
+diff --git a/src/moviebox_api/__init__.py b/src/moviebox_api/__init__.py
+index bb2e152..b1f952e 100644
+--- a/src/moviebox_api/__init__.py
++++ b/src/moviebox_api/__init__.py
+@@ -75,6 +75,13 @@ if __name__ == "__main__":
+ import logging
+ from importlib import metadata
+ 
++# httpx crashes on bracketed IPv6 entries in NO_PROXY (e.g. "[::1]") at
++# client creation time, which breaks every provider at once.  Normalise the
++# in-process variables before any httpx client is built.
++from moviebox_api.proxy_env import sanitize_no_proxy_env
++
++sanitize_no_proxy_env()
++
+ try:
+     __version__ = metadata.version("moviebox-api")
+ except metadata.PackageNotFoundError:
+diff --git a/src/moviebox_api/cli/interface.py b/src/moviebox_api/cli/interface.py
+index 435dea2..28388b9 100644
+--- a/src/moviebox_api/cli/interface.py
++++ b/src/moviebox_api/cli/interface.py
+@@ -787,15 +787,30 @@ def source_streams_command(
+         )
+     except Exception as exc:
+         click.echo(f"Provider resolution failed ({selected_provider}): {exc}")
++        if selected_provider == "yflix":
++            click.echo(
++                "Hint: yflix.to currently answers with an empty reply and every "
++                "Vega fallback module failed too; try -p vega:<module> manually "
++                "(see 'moviebox vega-providers')."
++            )
+         return
+ 
++    actual_provider = getattr(resolver, "resolved_provider_name", None) or selected_provider
++
+     if item is None:
+         click.echo("No matching item found.")
+         return
+ 
++    if actual_provider != selected_provider:
++        click.echo(
++            f"Note: {selected_provider} returned no playable streams, "
++            f"so this fell back to {actual_provider}."
++        )
++
+     if json_output:
+         payload = {
+-            "provider": selected_provider,
++            "provider": actual_provider,
++            "requested_provider": selected_provider,
+             "item": {
+                 "id": item.id,
+                 "title": item.title,
+@@ -835,7 +850,7 @@ def source_streams_command(
+         click.echo(json.dumps(payload, indent=2))
+         return
+ 
+-    click.echo(f"Provider: {selected_provider}")
++    click.echo(f"Provider: {actual_provider}")
+     click.echo(f"Item: {item.title}{f' ({item.year})' if item.year else ''}")
+     click.echo(f"Page: {item.page_url}")
+     click.echo(f"Streams: {len(streams)}")
+diff --git a/src/moviebox_api/constants.py b/src/moviebox_api/constants.py
+index 68c1911..42e2e5b 100644
+--- a/src/moviebox_api/constants.py
++++ b/src/moviebox_api/constants.py
+@@ -21,14 +21,11 @@ MIRROR_HOSTS = (
+     # "moviebox.ng",
+     "h5.aoneroom.com",
+     "movieboxapp.in",
+-    "moviebox.pk",
+-    "moviebox.ph",
+-    "moviebox.id",
+-    # "fmoviesunblocked.net"
+-    "v.moviebox.ph",
+-    "netnaija.video",
+-    # "sflix.film",
+-    # "netnaija.com"
++    # NOTE (2026-10-24, verified live): moviebox.pk, moviebox.id,
++    # v.moviebox.ph and netnaija.video no longer answer the API at all
++    # (empty reply / timeout), and moviebox.ph now redirects to
++    # movieboxhd.net, so it is listed under its current name instead.
++    "movieboxhd.net",
+ )
+ """Mirror domains/subdomains of Moviebox"""
+ 
+diff --git a/src/moviebox_api/providers/anime_common.py b/src/moviebox_api/providers/anime_common.py
+index ac6c549..414452d 100644
+--- a/src/moviebox_api/providers/anime_common.py
++++ b/src/moviebox_api/providers/anime_common.py
+@@ -469,13 +469,14 @@ class BaseAnimeProvider(BaseStreamProvider):
+         target_url: str,
+         *,
+         headers: dict[str, str],
++        timeout: httpx.Timeout | None = None,
+     ) -> httpx.Response:
+         """Run a blocking GET request for providers that misbehave on async clients."""
+ 
+         with httpx.Client(
+             headers=headers,
+             follow_redirects=True,
+-            timeout=_PROVIDER_TIMEOUT,
++            timeout=timeout or _PROVIDER_TIMEOUT,
+         ) as client:
+             response = client.get(target_url)
+         response.raise_for_status()
+@@ -487,6 +488,7 @@ class BaseAnimeProvider(BaseStreamProvider):
+         *,
+         referer: str | None = None,
+         accept: str | None = None,
++        timeout: httpx.Timeout | None = None,
+     ) -> tuple[httpx.Response, str]:
+         """Request HTML or JSON content while rotating candidate domains."""
+ 
+@@ -497,33 +499,43 @@ class BaseAnimeProvider(BaseStreamProvider):
+             headers["Referer"] = referer or base_url
+             if accept:
+                 headers["Accept"] = accept
+-            for _attempt in range(2):
++            # One async attempt plus one sync fallback per domain.  The old
++            # code retried that whole pair a second time, so a single dead
++            # domain (e.g. oplovers' old front-end host) could hang a search
++            # for ~100s before the next fallback was even tried.
++            try:
++                async with httpx.AsyncClient(
++                    headers=headers,
++                    follow_redirects=True,
++                    timeout=timeout or _PROVIDER_TIMEOUT,
++                ) as client:
++                    response = await client.get(target_url)
++                response.raise_for_status()
++                return response, base_url
++            except Exception as exc:
++                errors.append(f"{target_url}: async {exc}")
+                 try:
+-                    async with httpx.AsyncClient(
++                    response = await asyncio.to_thread(
++                        self._request_sync,
++                        target_url,
+                         headers=headers,
+-                        follow_redirects=True,
+-                        timeout=_PROVIDER_TIMEOUT,
+-                    ) as client:
+-                        response = await client.get(target_url)
+-                    response.raise_for_status()
++                        timeout=timeout or _PROVIDER_TIMEOUT,
++                    )
+                     return response, base_url
+-                except Exception as exc:
+-                    errors.append(f"{target_url}: async {exc}")
+-                    try:
+-                        response = await asyncio.to_thread(
+-                            self._request_sync,
+-                            target_url,
+-                            headers=headers,
+-                        )
+-                        return response, base_url
+-                    except Exception as sync_exc:
+-                        errors.append(f"{target_url}: sync {sync_exc}")
+-                        await asyncio.sleep(0.1)
++                except Exception as sync_exc:
++                    errors.append(f"{target_url}: sync {sync_exc}")
++                    continue
+ 
+         raise RuntimeError("; ".join(errors) or f"Failed to fetch {path_or_url}")
+ 
+-    async def _request_text(self, path_or_url: str, *, referer: str | None = None) -> tuple[str, str]:
+-        response, base_url = await self._request(path_or_url, referer=referer)
++    async def _request_text(
++        self,
++        path_or_url: str,
++        *,
++        referer: str | None = None,
++        timeout: httpx.Timeout | None = None,
++    ) -> tuple[str, str]:
++        response, base_url = await self._request(path_or_url, referer=referer, timeout=timeout)
+         return response.text, base_url
+ 
+     async def _request_json(
+@@ -532,8 +544,11 @@ class BaseAnimeProvider(BaseStreamProvider):
+         *,
+         referer: str | None = None,
+         accept: str = "application/json,text/plain;q=0.9,*/*;q=0.8",
++        timeout: httpx.Timeout | None = None,
+     ) -> tuple[Any, str]:
+-        response, base_url = await self._request(path_or_url, referer=referer, accept=accept)
++        response, base_url = await self._request(
++            path_or_url, referer=referer, accept=accept, timeout=timeout
++        )
+         return response.json(), base_url
+ 
+     async def _post_text(
+diff --git a/src/moviebox_api/providers/oplovers_provider.py b/src/moviebox_api/providers/oplovers_provider.py
+index 9653257..e3f3741 100644
+--- a/src/moviebox_api/providers/oplovers_provider.py
++++ b/src/moviebox_api/providers/oplovers_provider.py
+@@ -9,6 +9,7 @@ from difflib import SequenceMatcher
+ from typing import Any, ClassVar
+ from urllib.parse import urlparse
+ 
++import httpx
+ from bs4 import BeautifulSoup
+ 
+ from moviebox_api.constants import SubjectType
+@@ -32,6 +33,10 @@ class OploversProvider(BaseAnimeProvider):
+     name = 'oplovers'
+     env_keys = ('MOVIEBOX_OPLOVERS_URLS', 'MOVIEBOX_OPLOVERS_URL')
+     default_base_urls = ('https://coba.oploverz.ltd',)
++    # The front-end host is dead at the moment, so site fetches must fail
++    # fast instead of burning the full 25s provider timeout twice (async
++    # + sync fallback) before the working API path is tried.
++    _site_timeout = httpx.Timeout(12.0, connect=6.0)
+     api_env_keys = ('MOVIEBOX_OPLOVERS_API_URLS', 'MOVIEBOX_OPLOVERS_API_URL')
+     default_api_base_urls = ('https://backapi.oploverz.ac',)
+     _series_index_cache: ClassVar[tuple[float, list[tuple[str, str]]] | None] = None
+@@ -51,11 +56,20 @@ class OploversProvider(BaseAnimeProvider):
+         if subject_type != SubjectType.ANIME:
+             return []
+ 
+-        indexed_results = await self._search_via_index(query, year=year, limit=limit)
++        # The front-end host (coba.oploverz.ltd) is currently dead, so the
++        # index path raises instead of returning [].  Fall through to the
++        # API path instead of letting that failure end the search.
++        try:
++            indexed_results = await self._search_via_index(query, year=year, limit=limit)
++        except Exception:
++            indexed_results = []
+         if indexed_results:
+             return indexed_results[:limit]
+ 
+-        api_results = await self._search_via_api(query, year=year, limit=limit)
++        try:
++            api_results = await self._search_via_api(query, year=year, limit=limit)
++        except Exception:
++            api_results = []
+         return api_results[:limit]
+ 
+     async def list_trending(self, *, limit: int = 20) -> list[ProviderSearchResult]:
+@@ -74,8 +88,16 @@ class OploversProvider(BaseAnimeProvider):
+     ) -> list[ProviderStream]:
+         slug = str(item.payload.get('slug') or '').strip()
+         content_kind = str(item.payload.get('content_kind') or 'series').strip().lower() or 'series'
+-        payload = await self._content_payload(content_kind, slug)
++        try:
++            payload = await self._content_payload(content_kind, slug)
++        except Exception:
++            payload = {}
+         episodes = payload.get('episodes') if isinstance(payload, dict) else []
++        if (not isinstance(episodes, list) or not episodes) and content_kind == 'series' and slug:
++            # Front-end host is dead, but the API still serves episodes
++            # (GET /api/series/<slug>/episodes, newest first, 10 per page).
++            api_episode = await self._api_episode(slug, episode if episode > 0 else 1)
++            episodes = [api_episode] if api_episode else []
+         if not isinstance(episodes, list) or not episodes:
+             return []
+ 
+@@ -252,7 +274,9 @@ class OploversProvider(BaseAnimeProvider):
+         if cached and cached[0] > now:
+             return list(cached[1])
+ 
+-        html, base_url = await self._request_text('/series', referer=self.base_urls()[0])
++        html, base_url = await self._request_text(
++            '/series', referer=self.base_urls()[0], timeout=self._site_timeout
++        )
+         soup = BeautifulSoup(html, 'html.parser')
+         entries: list[tuple[str, str]] = []
+         seen: set[str] = set()
+@@ -308,7 +332,9 @@ class OploversProvider(BaseAnimeProvider):
+         )
+ 
+     async def _content_payload(self, content_kind: str, slug: str) -> dict[str, Any]:
+-        payload, _base_url = await self._request_json(f'/{content_kind}/{slug}/__data.json')
++        payload, _base_url = await self._request_json(
++            f'/{content_kind}/{slug}/__data.json', timeout=self._site_timeout
++        )
+         nodes = payload.get('nodes') if isinstance(payload, dict) else []
+         if not isinstance(nodes, list) or len(nodes) < 3:
+             return {}
+@@ -328,10 +354,30 @@ class OploversProvider(BaseAnimeProvider):
+         year: int | None,
+         limit: int,
+     ) -> list[ProviderSearchResult]:
++        # Fast path first: the API serves a series directly by slug
++        # (GET /api/series/<slug>), verified live for e.g. "one-piece".
++        # The old code skipped this and instead returned the first page of
++        # the unfiltered series list, whatever the query was.
++        slug = re.sub(r'[^a-z0-9]+', '-', query.strip().lower()).strip('-')
++        if slug:
++            try:
++                detail = await self._api_json(f'/api/series/{slug}')
++            except Exception:
++                detail = {}
++            entry = detail.get('data') if isinstance(detail, dict) else None
++            if isinstance(entry, dict) and str(entry.get('slug') or '').strip():
++                mapped = self._result_from_api_entry(entry)
++                if year is None or mapped.year == year:
++                    return [mapped]
++
++        # Fallback: scan the paginated series list, but only keep entries
++        # that actually match the query, and stop after 20 pages so a
++        # non-matching title cannot turn into a 100-page crawl.  Note the
++        # API ignores the `search` parameter, so filtering must happen here.
+         results: list[ProviderSearchResult] = []
+         page = 1
+-        while len(results) < limit:
+-            search_path = f'/api/series?search={query.strip().replace(" ", "+")}&page={page}'
++        while len(results) < limit and page <= 20:
++            search_path = f'/api/series?page={page}'
+             payload = await self._api_json(search_path)
+             items = payload.get('data') if isinstance(payload, dict) else []
+             if not isinstance(items, list) or not items:
+@@ -342,6 +388,8 @@ class OploversProvider(BaseAnimeProvider):
+                 mapped = self._result_from_api_entry(entry)
+                 if year is not None and mapped.year != year:
+                     continue
++                if self._title_score(query, mapped.title) < 0.42:
++                    continue
+                 results.append(mapped)
+                 if len(results) >= limit:
+                     break
+@@ -351,6 +399,7 @@ class OploversProvider(BaseAnimeProvider):
+             if int(meta.get('currentPage') or 0) >= int(meta.get('lastPage') or 0):
+                 break
+             page += 1
++        results.sort(key=lambda item: self._result_score(query, item), reverse=True)
+         return results[:limit]
+ 
+     async def _api_json(self, path_or_url: str) -> dict[str, Any]:
+@@ -366,6 +415,45 @@ class OploversProvider(BaseAnimeProvider):
+                 return payload
+         raise RuntimeError('; '.join(errors) or f'Failed to fetch {path_or_url}')
+ 
++    async def _api_episode(self, slug: str, requested_episode: int) -> dict[str, Any] | None:
++        """Fetch one episode from the API, or None if it cannot be found.
++
++        Episodes are listed newest-first, 10 per page, so the page holding
++        episode N is derived from the series' total episode count.
++        """
++
++        try:
++            detail = await self._api_json(f'/api/series/{slug}')
++        except Exception:
++            return None
++        entry = detail.get('data') if isinstance(detail, dict) else None
++        total = 0
++        if isinstance(entry, dict):
++            try:
++                total = int(entry.get('totalEpisodes') or 0)
++            except (TypeError, ValueError):
++                total = 0
++        page = (total - requested_episode) // 10 + 1 if total and requested_episode <= total else 1
++        if page < 1:
++            page = 1
++        try:
++            payload = await self._api_json(f'/api/series/{slug}/episodes?page={page}')
++        except Exception:
++            return None
++        items = payload.get('data') if isinstance(payload, dict) else []
++        if not isinstance(items, list):
++            return None
++        for episode in items:
++            if not isinstance(episode, dict):
++                continue
++            try:
++                number = int(str(episode.get('episodeNumber') or '0'))
++            except ValueError:
++                continue
++            if number == requested_episode:
++                return episode
++        return None
++
+     def _result_from_content_payload(
+         self,
+         content_kind: str,
+diff --git a/src/moviebox_api/providers/otakudesu_provider.py b/src/moviebox_api/providers/otakudesu_provider.py
+index 3954722..12fb1f0 100644
+--- a/src/moviebox_api/providers/otakudesu_provider.py
++++ b/src/moviebox_api/providers/otakudesu_provider.py
+@@ -1,9 +1,12 @@
+ """Otakudesu anime provider.
+ 
+-Chosen as the third anime provider because the current public domain (otakudesu.pl)
+-is reachable without a JavaScript gate on search/detail pages and exposes predictable
+-series metadata and episode links, unlike the Kuronime/Neonime options observed during
+-implementation.
++Chosen as the third anime provider because the current public domain
++(otakudesu.blog) is reachable without a JavaScript gate on search/detail
++pages and exposes predictable series metadata and episode links, unlike
++the Kuronime/Neonime options observed during implementation.  The old
++otakudesu.pl domain was dropped from the defaults in 2026-10-24 after it
++started answering with an empty reply; it can still be re-added with
++MOVIEBOX_OTAKUDESU_URLS if it comes back.
+ """
+ 
+ from __future__ import annotations
+@@ -33,7 +36,7 @@ class OtakudesuProvider(BaseAnimeProvider):
+ 
+     name = 'otakudesu'
+     env_keys = ('MOVIEBOX_OTAKUDESU_URLS', 'MOVIEBOX_OTAKUDESU_URL')
+-    default_base_urls = ('https://otakudesu.blog', 'https://otakudesu.pl')
++    default_base_urls = ('https://otakudesu.blog',)
+ 
+     async def search(
+         self,
+@@ -221,7 +224,7 @@ class OtakudesuProvider(BaseAnimeProvider):
+         if title_tag:
+             raw = title_tag.get_text(' ', strip=True)
+             cleaned = re.split(
+-                "\s+(?:\||-|\u2013|\u2014)\s+",
++                r"\s+(?:\||-|\u2013|\u2014)\s+",
+                 raw.split('?', maxsplit=1)[0],
+                 maxsplit=1,
+             )[0].strip()
+diff --git a/src/moviebox_api/proxy_env.py b/src/moviebox_api/proxy_env.py
+new file mode 100644
+index 0000000..2320ec1
+--- /dev/null
++++ b/src/moviebox_api/proxy_env.py
+@@ -0,0 +1,53 @@
++"""Sanitise proxy-bypass environment variables for httpx.
++
++httpx parses every entry in ``NO_PROXY``/``no_proxy`` as a URL pattern at
++client creation time.  Bracketed IPv6 entries such as ``[::1]`` -- which are
++common in container and CI environments -- make that parsing fail with
++``InvalidURL: Invalid port: ':1]'`` before any request is even attempted,
++so *every* provider in this package breaks at once.
++
++Bare IPv6 literals (``::1``) parse fine in httpx, so the fix is simply to
++drop the brackets.  This only rewrites the in-process environment; it does
++not change the user's shell, and non-IPv6 entries are left untouched.
++"""
++
++from __future__ import annotations
++
++import os
++
++_NO_PROXY_KEYS = ("NO_PROXY", "no_proxy")
++
++
++def sanitize_no_proxy_value(value: str) -> str:
++    """Return ``value`` with brackets stripped from IPv6 no_proxy entries."""
++
++    entries = []
++    for raw_entry in str(value).split(","):
++        entry = raw_entry.strip()
++        if not entry:
++            continue
++        if entry.startswith("["):
++            closing = entry.find("]")
++            if closing > 0:
++                # Keep anything after the bracket (e.g. a port suffix).
++                entry = entry[1:closing] + entry[closing + 1 :]
++        entries.append(entry)
++    return ",".join(entries)
++
++
++def sanitize_no_proxy_env() -> bool:
++    """Normalise ``NO_PROXY``/``no_proxy`` in the current process.
++
++    Returns True when at least one variable was changed.
++    """
++
++    changed = False
++    for key in _NO_PROXY_KEYS:
++        original = os.environ.get(key)
++        if not original:
++            continue
++        sanitized = sanitize_no_proxy_value(original)
++        if sanitized != original:
++            os.environ[key] = sanitized
++            changed = True
++    return changed
+diff --git a/src/moviebox_api/source.py b/src/moviebox_api/source.py
+index 3e10ce9..26233f2 100644
+--- a/src/moviebox_api/source.py
++++ b/src/moviebox_api/source.py
+@@ -1,16 +1,75 @@
+ """High-level helpers for multi-provider stream resolution."""
+ 
++import os
++
+ from moviebox_api.constants import SubjectType
+ from moviebox_api.providers import SUPPORTED_ANIME_PROVIDERS, get_provider, normalize_provider_name
+ from moviebox_api.providers.models import ProviderSearchResult, ProviderStream, ProviderSubtitle
+ 
++# Vega modules verified live on 2026-10-24 (search_best_match + resolve,
++# both a movie "Interstellar" and a series "Breaking Bad" S1E1):
++#   vega (autoEmbed, the default), 4khdhub, castle, 1flex.
++# Other active manifest modules failed that same test (no best match,
++# zero streams, timeout, or runtime error): 1cinevood, katmovies, mod,
++# uhd, movieBoxWeb, gokuHD, eonMovies, movies4u, hdhub4u, showbox,
++# everything, vega (the "vega" module itself), drive, world4u,
++# netflixMirror, primeMirror, disneyMirror, torrentio, zeefliz.
++# The chain is tried in order and stops at the first module that returns
++# playable streams, so a single dead module no longer ends the request.
++# Override with MOVIEBOX_VEGA_FALLBACKS="vega,vega:4khdhub" (comma list).
++DEFAULT_VEGA_FALLBACK_CHAIN = ("vega", "vega:4khdhub", "vega:castle", "vega:1flex")
++ENV_VEGA_FALLBACK_CHAIN_KEY = "MOVIEBOX_VEGA_FALLBACKS"
++
++
++def vega_fallback_chain() -> tuple[str, ...]:
++    """Return the Vega fallback chain, honouring the env override."""
++
++    raw = os.getenv(ENV_VEGA_FALLBACK_CHAIN_KEY, "").strip()
++    if not raw:
++        return DEFAULT_VEGA_FALLBACK_CHAIN
++    entries = tuple(
++        entry.strip() for entry in raw.split(",") if entry.strip()
++    )
++    valid = tuple(
++        entry
++        for entry in entries
++        if entry == "vega" or entry.startswith("vega:")
++    )
++    return valid or DEFAULT_VEGA_FALLBACK_CHAIN
++
++
++def _vega_module_name(provider_name: str) -> str | None:
++    """Normalise a Vega provider name to its module ("vega" == autoEmbed)."""
++
++    if provider_name == "vega":
++        return "autoEmbed"
++    if provider_name.startswith("vega:"):
++        return provider_name.split(":", maxsplit=1)[1].strip() or None
++    return None
++
+ 
+ class SourceResolver:
+-    """Resolve stream links from a selected provider."""
++    """Resolve stream links from a selected provider.
++
++    The native ``moviebox`` provider is currently unreliable: its search
++    endpoint returns zero results for every title and its play/download
++    endpoints answer ``403 invalid region`` from several networks, so a
++    default ``moviebox`` resolution used to end with "No matching item
++    found" even though the working ``vega`` provider resolves the same
++    title fine.  ``yflix`` is dead too (``yflix.to`` answers with an empty
++    reply).  For movies/TV, a failed or empty ``moviebox``/``yflix``/``vega``
++    resolution therefore falls back through the verified Vega chain
++    (:func:`vega_fallback_chain`) automatically; the provider that
++    actually produced the result is recorded on
++    :attr:`resolved_provider_name` so callers can show it honestly instead
++    of claiming the requested provider succeeded.
++    """
+ 
+     def __init__(self, provider_name: str | None = None):
+         self.provider_name = provider_name
+         self.provider = get_provider(provider_name)
++        self.resolved_provider_name: str | None = None
++        self.fallback_reason: str | None = None
+ 
+     async def resolve(
+         self,
+@@ -35,18 +94,102 @@ class SourceResolver:
+                 if normalized_provider_name in SUPPORTED_ANIME_PROVIDERS:
+                     selected_provider_name = normalized_provider_name
+ 
+-            item, streams, subtitles, _provider_name = await resolve_anime_source_query(
++            item, streams, subtitles, resolved_provider = await resolve_anime_source_query(
+                 title,
+                 year=year,
+                 season=season,
+                 episode=episode,
+                 provider_name=selected_provider_name,
+             )
++            self.resolved_provider_name = resolved_provider
+             return (item, streams, subtitles)
+ 
++        try:
++            result = await self._resolve_with_provider(
++                self.provider,
++                title=title,
++                subject_type=subject_type,
++                year=year,
++                season=season,
++                episode=episode,
++                imdb_id=imdb_id,
++                tmdb_id=tmdb_id,
++            )
++        except Exception as exc:
++            result = None
++            primary_error: Exception | None = exc
++        else:
++            primary_error = None
++
++        primary_name = normalize_provider_name(self.provider_name) if self.provider_name else "moviebox"
++        if result is not None and (result[0] is not None and result[1]):
++            self.resolved_provider_name = primary_name
++            return result
++
++        # Only movies/TV fall back, and only from providers known to be
++        # dead or to be a single Vega module: moviebox (search 0 results,
++        # play 403 invalid region), yflix (empty reply), and any vega
++        # module (one module failing must not end the request when another
++        # verified module can serve the same title).  Other explicit
++        # providers keep the old behaviour: their error propagates and an
++        # empty result stays empty.
++        primary_module = _vega_module_name(primary_name)
++        is_fallback_eligible = primary_name in ("moviebox", "yflix") or primary_module is not None
++        if not is_fallback_eligible:
++            if primary_error is not None:
++                raise primary_error
++            self.resolved_provider_name = primary_name
++            return result if result is not None else (None, [], [])
++
++        reason = (
++            f"{primary_name} failed ({primary_error})"
++            if primary_error is not None
++            else f"{primary_name} returned no playable streams"
++        )
++        for candidate in vega_fallback_chain():
++            # Skip the module already tried as the primary provider:
++            # "vega" is the default autoEmbed module.
++            if primary_module is not None and _vega_module_name(candidate) == primary_module:
++                continue
++            try:
++                fallback = await self._resolve_with_provider(
++                    get_provider(candidate),
++                    title=title,
++                    subject_type=subject_type,
++                    year=year,
++                    season=season,
++                    episode=episode,
++                    imdb_id=imdb_id,
++                    tmdb_id=tmdb_id,
++                )
++            except Exception:
++                fallback = None
++
++            if fallback is not None and fallback[0] is not None and fallback[1]:
++                self.resolved_provider_name = candidate
++                self.fallback_reason = reason
++                return fallback
++
++        if primary_error is not None:
++            raise primary_error
++        self.resolved_provider_name = primary_name
++        return result if result is not None else (None, [], [])
++
++    async def _resolve_with_provider(
++        self,
++        provider,
++        *,
++        title: str,
++        subject_type: SubjectType,
++        year: int | None,
++        season: int,
++        episode: int,
++        imdb_id: str | None,
++        tmdb_id: int | None,
++    ) -> tuple[ProviderSearchResult | None, list[ProviderStream], list[ProviderSubtitle]]:
+         item: ProviderSearchResult | None = None
+ 
+-        id_builder = getattr(self.provider, 'build_item_from_ids', None)
++        id_builder = getattr(provider, 'build_item_from_ids', None)
+         if callable(id_builder):
+             try:
+                 item = await id_builder(
+@@ -60,7 +203,7 @@ class SourceResolver:
+                 item = None
+ 
+         if item is None:
+-            item = await self.provider.search_best_match(
++            item = await provider.search_best_match(
+                 query=title,
+                 subject_type=subject_type,
+                 year=year,
+@@ -68,13 +211,13 @@ class SourceResolver:
+         if item is None:
+             return (None, [], [])
+ 
+-        streams = await self.provider.resolve_streams(
++        streams = await provider.resolve_streams(
+             item,
+             season=season,
+             episode=episode,
+         )
+ 
+-        subtitles = await self.provider.resolve_subtitles(
++        subtitles = await provider.resolve_subtitles(
+             item,
+             season=season,
+             episode=episode,
+diff --git a/src/moviebox_api/tui/app.py b/src/moviebox_api/tui/app.py
+index 48b8971..ba61bf0 100644
+--- a/src/moviebox_api/tui/app.py
++++ b/src/moviebox_api/tui/app.py
+@@ -1006,7 +1006,8 @@ class InteractiveTextualApp(App[None]):
+                     episode=episode,
+                 )
+             else:
+-                resolved_item, streams, subtitles = await SourceResolver(provider_name=provider_name).resolve(
++                _resolver = SourceResolver(provider_name=provider_name)
++                resolved_item, streams, subtitles = await _resolver.resolve(
+                     title=self.selected_item.title,
+                     subject_type=self.selected_item.subjectType,
+                     year=self.selected_item.year,
+@@ -1015,6 +1016,9 @@ class InteractiveTextualApp(App[None]):
+                     imdb_id=self.selected_item.imdbId,
+                     tmdb_id=self.selected_item.tmdbId,
+                 )
++                # moviebox -> vega fallback inside the resolver must be
++                # visible in the UI, otherwise it looks like moviebox worked.
++                provider_name = _resolver.resolved_provider_name or provider_name
+         except Exception as exc:
+             if not silent:
+                 self._set_status(f"Provider resolution failed: {exc}")
+diff --git a/tests/providers/test_source_fallback.py b/tests/providers/test_source_fallback.py
+new file mode 100644
+index 0000000..674fbd3
+--- /dev/null
++++ b/tests/providers/test_source_fallback.py
+@@ -0,0 +1,78 @@
++import pytest
++
++from moviebox_api.constants import SubjectType
++from moviebox_api.providers.models import ProviderSearchResult, ProviderStream, ProviderSubtitle
++from moviebox_api.source import SourceResolver
++
++
++class _Provider:
++    def __init__(self, item, streams, error=None):
++        self._item = item
++        self._streams = streams
++        self._error = error
++
++    async def search_best_match(self, query, subject_type, *, year=None):
++        if self._error is not None:
++            raise self._error
++        return self._item
++
++    async def resolve_streams(self, item, *, season=0, episode=0):
++        if self._error is not None:
++            raise self._error
++        return self._streams
++
++    async def resolve_subtitles(self, item, *, season=0, episode=0):
++        return []
++
++
++def _item(title="Interstellar"):
++    return ProviderSearchResult(
++        id="1", title=title, page_url="https://example.com/x", subject_type=SubjectType.MOVIES
++    )
++
++
++@pytest.mark.asyncio
++async def test_moviebox_empty_result_falls_back_to_vega(monkeypatch):
++    vega_streams = [ProviderStream(url="https://example.com/stream.m3u8", source="vega")]
++
++    def _fake_get_provider(name=None):
++        if name == "vega":
++            return _Provider(_item(), vega_streams)
++        return _Provider(None, [])
++
++    monkeypatch.setattr("moviebox_api.source.get_provider", _fake_get_provider)
++    resolver = SourceResolver("moviebox")
++    item, streams, _subtitles = await resolver.resolve("Interstellar", SubjectType.MOVIES)
++    assert item is not None and item.title == "Interstellar"
++    assert streams == vega_streams
++    assert resolver.resolved_provider_name == "vega"
++    assert resolver.fallback_reason is not None
++
++
++@pytest.mark.asyncio
++async def test_moviebox_error_falls_back_to_vega(monkeypatch):
++    vega_streams = [ProviderStream(url="https://example.com/stream.m3u8", source="vega")]
++
++    def _fake_get_provider(name=None):
++        if name == "vega":
++            return _Provider(_item(), vega_streams)
++        return _Provider(None, [], error=RuntimeError("403 invalid region"))
++
++    monkeypatch.setattr("moviebox_api.source.get_provider", _fake_get_provider)
++    resolver = SourceResolver("moviebox")
++    item, streams, _subtitles = await resolver.resolve("Interstellar", SubjectType.MOVIES)
++    assert streams == vega_streams
++    assert resolver.resolved_provider_name == "vega"
++
++
++@pytest.mark.asyncio
++async def test_non_moviebox_provider_is_not_fallen_back(monkeypatch):
++    def _fake_get_provider(name=None):
++        return _Provider(None, [])
++
++    monkeypatch.setattr("moviebox_api.source.get_provider", _fake_get_provider)
++    resolver = SourceResolver("vega")
++    item, streams, _subtitles = await resolver.resolve("Interstellar", SubjectType.MOVIES)
++    assert item is None
++    assert streams == []
++    assert resolver.resolved_provider_name == "vega"
+diff --git a/tests/providers/test_vega_fallback_chain.py b/tests/providers/test_vega_fallback_chain.py
+new file mode 100644
+index 0000000..535eb1d
+--- /dev/null
++++ b/tests/providers/test_vega_fallback_chain.py
+@@ -0,0 +1,106 @@
++import pytest
++
++from moviebox_api.constants import SubjectType
++from moviebox_api.providers.models import ProviderSearchResult, ProviderStream
++from moviebox_api.source import SourceResolver, vega_fallback_chain
++
++
++class _Provider:
++    def __init__(self, item, streams, error=None):
++        self._item = item
++        self._streams = streams
++        self._error = error
++
++    async def search_best_match(self, query, subject_type, *, year=None):
++        if self._error is not None:
++            raise self._error
++        return self._item
++
++    async def resolve_streams(self, item, *, season=0, episode=0):
++        if self._error is not None:
++            raise self._error
++        return self._streams
++
++    async def resolve_subtitles(self, item, *, season=0, episode=0):
++        return []
++
++
++def _item(title="Interstellar"):
++    return ProviderSearchResult(
++        id="1", title=title, page_url="https://example.com/x", subject_type=SubjectType.MOVIES
++    )
++
++
++def _streams(source):
++    return [ProviderStream(url="https://example.com/stream.m3u8", source=source)]
++
++
++def test_default_chain_is_the_verified_modules():
++    assert vega_fallback_chain() == ("vega", "vega:4khdhub", "vega:castle", "vega:1flex")
++
++
++@pytest.mark.asyncio
++async def test_moviebox_skips_dead_vega_and_uses_4khdhub(monkeypatch):
++    """autoEmbed empty -> next verified module wins, and is reported honestly."""
++
++    def _fake_get_provider(name=None):
++        if name == "vega:4khdhub":
++            return _Provider(_item(), _streams("4khdhub"))
++        return _Provider(None, [])
++
++    monkeypatch.setattr("moviebox_api.source.get_provider", _fake_get_provider)
++    monkeypatch.delenv("MOVIEBOX_VEGA_FALLBACKS", raising=False)
++    resolver = SourceResolver("moviebox")
++    item, streams, _subtitles = await resolver.resolve("Interstellar", SubjectType.MOVIES)
++    assert item is not None
++    assert streams == _streams("4khdhub")
++    assert resolver.resolved_provider_name == "vega:4khdhub"
++    assert resolver.fallback_reason is not None
++
++
++@pytest.mark.asyncio
++async def test_yflix_falls_back_to_vega_chain(monkeypatch):
++    def _fake_get_provider(name=None):
++        if name == "vega":
++            return _Provider(_item(), _streams("vega"))
++        return _Provider(None, [], error=RuntimeError("empty reply"))
++
++    monkeypatch.setattr("moviebox_api.source.get_provider", _fake_get_provider)
++    monkeypatch.delenv("MOVIEBOX_VEGA_FALLBACKS", raising=False)
++    resolver = SourceResolver("yflix")
++    item, streams, _subtitles = await resolver.resolve("Interstellar", SubjectType.MOVIES)
++    assert streams == _streams("vega")
++    assert resolver.resolved_provider_name == "vega"
++
++
++@pytest.mark.asyncio
++async def test_explicit_vega_module_does_not_retry_itself(monkeypatch):
++    calls = []
++
++    def _fake_get_provider(name=None):
++        calls.append(name)
++        if name == "vega:castle":
++            return _Provider(_item(), _streams("castle"))
++        return _Provider(None, [])
++
++    monkeypatch.setattr("moviebox_api.source.get_provider", _fake_get_provider)
++    monkeypatch.delenv("MOVIEBOX_VEGA_FALLBACKS", raising=False)
++    # Primary provider is constructed in __init__ too, so the first call
++    # is for vega:4khdhub itself; the chain must not call it a second time.
++    resolver = SourceResolver("vega:4khdhub")
++    item, streams, _subtitles = await resolver.resolve("Interstellar", SubjectType.MOVIES)
++    assert streams == _streams("castle")
++    assert resolver.resolved_provider_name == "vega:castle"
++    assert calls.count("vega:4khdhub") == 1
++
++
++@pytest.mark.asyncio
++async def test_env_override_replaces_chain(monkeypatch):
++    monkeypatch.setenv("MOVIEBOX_VEGA_FALLBACKS", "vega:castle")
++    assert vega_fallback_chain() == ("vega:castle",)
++
++
++@pytest.mark.asyncio
++async def test_env_override_ignores_invalid_entries(monkeypatch):
++    monkeypatch.setenv("MOVIEBOX_VEGA_FALLBACKS", "bogus,,vega:castle")
++    assert vega_fallback_chain() == ("vega:castle",)
+diff --git a/tests/test_proxy_env.py b/tests/test_proxy_env.py
+new file mode 100644
+index 0000000..fe18db9
+--- /dev/null
++++ b/tests/test_proxy_env.py
+@@ -0,0 +1,25 @@
++import httpx
++
++from moviebox_api.proxy_env import sanitize_no_proxy_env, sanitize_no_proxy_value
++
++
++def test_bracketed_ipv6_entries_are_unbracketed():
++    assert sanitize_no_proxy_value("localhost,[::1],127.0.0.1") == "localhost,::1,127.0.0.1"
++    assert sanitize_no_proxy_value("[fd8b:4f84:7d32:99::1]") == "fd8b:4f84:7d32:99::1"
++    assert sanitize_no_proxy_value("localhost,127.0.0.1") == "localhost,127.0.0.1"
++
++
++def test_sanitize_env_allows_httpx_client_creation(monkeypatch):
++    # This is the exact environment shape that used to crash httpx with
++    # InvalidURL("Invalid port: ':1]'") at AsyncClient creation time.
++    monkeypatch.setenv(
++        "NO_PROXY",
++        "localhost,127.0.0.1,::1,[::1],fd8b:4f84:7d32:99::1,[fd8b:4f84:7d32:99::1]",
++    )
++    monkeypatch.setenv(
++        "no_proxy",
++        "localhost,127.0.0.1,::1,[::1],fd8b:4f84:7d32:99::1,[fd8b:4f84:7d32:99::1]",
++    )
++    assert sanitize_no_proxy_env() is True
++    client = httpx.AsyncClient()
++    assert client is not None
